@@ -11,7 +11,9 @@ export function createPlugin(options: {settingsFile?: string; bridge?: MascotBri
   const bridge = options.bridge || new MascotBridge();
   let settings: PluginSettings = {...DEFAULT_SETTINGS};
   let receivedCount = 0, sentCount = 0, droppedCount = 0, lastSent = 0;
-  let startedAt = 0, initialBatchPending = true, ignoredStartupCount = 0;
+  let startedAt = 0, ignoredStartupCount = 0;
+  let connectionId: number | null = null;
+  let initialBatchPending = true;
   let running = false, sending = false, generation = 0;
   let settingsError: string | null = null;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -24,12 +26,20 @@ export function createPlugin(options: {settingsFile?: string; bridge?: MascotBri
     settings = next; settingsError = null;
   };
   const clearQueue = () => { droppedCount += queue.length; queue.length = 0; };
+  const syncConnection = () => {
+    const connection = bridge.status();
+    const nextId = connection.connected ? connection.connectionId : null;
+    // 短い切断をポーリングで見逃しても接続IDの変化で古い待機を破棄する。
+    if (nextId !== connectionId) { clearQueue(); connectionId = nextId; initialBatchPending = true; }
+    return connection;
+  };
   const expireQueue = () => {
     while (queue[0] && queue[0].expires <= Date.now()) { queue.shift(); droppedCount++; }
   };
   const flush = async () => {
+    const connection = syncConnection();
     expireQueue();
-    if (!running || sending || !queue.length || !bridge.status().connected || Date.now() - lastSent < settings.sendIntervalMs) return;
+    if (!running || sending || !queue.length || !connection.connected || Date.now() - lastSent < settings.sendIntervalMs) return;
     sending = true;
     const epoch = generation;
     const item = queue.shift()!;
@@ -48,17 +58,20 @@ export function createPlugin(options: {settingsFile?: string; bridge?: MascotBri
     }
     queue.push({text, expires: Date.now() + settings.queueMaxAgeSeconds * 1000}); void flush(); return true;
   };
-  const snapshot = () => ({stage: "speech", receivedCount, sentCount, droppedCount, queuedCount: queue.length,
-    ignoredStartupCount, initialBatchPending, startedAt,
-    settings: {...settings}, settingsError, connected: bridge.status().connected, connection: bridge.status()});
+  const snapshot = () => {
+    const connection = syncConnection();
+    return {stage: "speech", receivedCount, sentCount, droppedCount, queuedCount: queue.length,
+      ignoredStartupCount, initialBatchPending, startedAt, connectedAt: connection.connectedAt,
+      settings: {...settings}, settingsError, connected: connection.connected, connection};
+  };
   return {
-    name: "Live2Dマスコット連携", uid: "com.onecomme.live2d-mascot", version: "0.2.0", author: "maymehbird",
+    name: "Live2Dマスコット連携", uid: "com.onecomme.live2d-mascot", version: "0.2.1", author: "maymehbird",
     url: "http://localhost:11180/plugins/com.onecomme.live2d-mascot/index.html", permissions: ["comments"],
     init() {
       generation++; running = true; sending = false;
       clearInterval(timer); queue.length = 0; seen.clear();
       receivedCount = sentCount = droppedCount = lastSent = 0;
-      startedAt = Date.now(); initialBatchPending = true; ignoredStartupCount = 0;
+      startedAt = Date.now(); ignoredStartupCount = 0; connectionId = null; initialBatchPending = true;
       settings = {...DEFAULT_SETTINGS}; settingsError = null;
       try { settings = loadSettings(JSON.parse(readFileSync(settingsFile, "utf8"))); }
       catch (error) {
@@ -79,15 +92,29 @@ export function createPlugin(options: {settingsFile?: string; bridge?: MascotBri
       receivedCount += payload.comments.length;
       const now = Date.now();
       for (const [key, expiry] of seen) if (expiry < now) seen.delete(key);
-      const ignoreBatch = initialBatchPending;
-      initialBatchPending = false;
-      for (const value of payload.comments) {
-        const comment = normalizeComment(value, settings);
+      const connection = syncConnection();
+      const initial = connection.connected && initialBatchPending;
+      const comments = payload.comments.map(value => ({comment: normalizeComment(value, settings), timestamp: commentTimestamp(value)}));
+      // 初回の時刻不明分は受信順の最後だけを読む。それ以前のIDも記録する。
+      let latestUnknown = -1;
+      if (initial) {
+        for (let i = 0; i < comments.length; i++) {
+          const {comment, timestamp} = comments[i]!;
+          if (comment && timestamp === null && !seen.has(comment.key)) latestUnknown = i;
+        }
+        initialBatchPending = false;
+      }
+      for (let i = 0; i < comments.length; i++) {
+        const {comment, timestamp} = comments[i]!;
+        if (initial && i < latestUnknown && comment?.key === comments[latestUnknown]!.comment?.key) continue;
         if (!comment || seen.has(comment.key)) continue;
         seen.set(comment.key, now + comment.ttl);
         if (seen.size > 5000) seen.delete(seen.keys().next().value!);
-        const timestamp = commentTimestamp(value);
-        if (ignoreBatch || (timestamp !== null && timestamp < startedAt)) { ignoredStartupCount++; continue; }
+        if (!connection.connected || connection.connectedAt === null ||
+            (timestamp !== null && timestamp < connection.connectedAt) ||
+            (initial && timestamp === null && i !== latestUnknown)) {
+          ignoredStartupCount++; continue;
+        }
         if (settings.enabled) enqueue(comment.text);
       }
     },
@@ -123,7 +150,7 @@ export function createPlugin(options: {settingsFile?: string; bridge?: MascotBri
         if (typeof input.bridgeFile !== "string" || input.bridgeFile.length > 4096) return {code: 400, response: {error: "bridgeFile文字列を指定してください"}};
         settings.bridgeFile = input.bridgeFile.trim(); clearQueue(); bridge.start(settings.bridgeFile);
       } else if (input.action === "test") {
-        if (!running || !bridge.status().connected) return {code: 409, response: {error: "マスコットへの接続完了後に試してください"}};
+        if (!running || !syncConnection().connected) return {code: 409, response: {error: "マスコットへの接続完了後に試してください"}};
         if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 1000) return {code: 400, response: {error: "テスト文を1〜1000文字で指定してください"}};
         if (!enqueue(Array.from(input.text.trim()).slice(0, settings.maxTextLength).join(""))) return {code: 409, response: {error: "送信待ちが上限に達しています"}};
       } else return {code: 400, response: {error: "操作が不正です"}};

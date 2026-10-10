@@ -9,16 +9,24 @@ import { normalizeComment, commentTimestamp } from "./comments";
 import { createSayMessage } from "./protocol";
 
 class FakeBridge extends MascotBridge {
-  online = true;
+  private isOnline = true;
+  fakeConnectedAt = Date.now();
+  fakeConnectionId = 1;
+  get online() { return this.isOnline; }
+  set online(value: boolean) {
+    if (value && !this.isOnline) { this.fakeConnectedAt = Date.now(); this.fakeConnectionId++; }
+    this.isOnline = value;
+  }
   texts: string[] = [];
   times: number[] = [];
-  override start() {}
+  override start() { if (this.online) { this.fakeConnectedAt = Date.now(); this.fakeConnectionId++; } }
   override stop() {}
-  override status() { return {state: "connected" as const, connected: this.online, bridgeFile: "", error: null}; }
+  override status() { return {state: "connected" as const, connected: this.online,
+    connectedAt: this.online ? this.fakeConnectedAt : null, connectionId: this.fakeConnectionId, bridgeFile: "", error: null}; }
   override async say(text: string) { this.texts.push(text); this.times.push(Date.now()); return true; }
 }
 const event = (id: string, comment = "<b>こんにちは</b>", userId = "viewer") =>
-  ({service: "youtube", data: {liveId: "live", id, userId, name: "花子", comment}});
+  ({service: "youtube", data: {liveId: "live", id, userId, name: "花子", comment, timestamp: Date.now()}});
 
 test("正規化・テンプレート・絵文字・自己コメント・履歴の除外", () => {
   const settings = {...DEFAULT_SETTINGS, ownUserIds: "me"};
@@ -56,53 +64,101 @@ test("初期送信無効・保存・重複排除・送信間隔・再起動復�
 
 test("キュー上限・無効化時の破棄・設定検証・接続前テスト拒否", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "mascot-speech-"));
-  const bridge = new FakeBridge(); bridge.online = false;
+  const bridge = new FakeBridge();
   const plugin = createPlugin({settingsFile: path.join(dir, "settings.json"), bridge});
   try {
     plugin.init(null);
     const settings = {...DEFAULT_SETTINGS, enabled: true, queueLimit: 1};
     await plugin.request({method: "POST", body: {action: "settings", settings}});
     plugin.subscribe("comments", {comments: [event("initial")]});
+    await Bun.sleep(5);
     plugin.subscribe("comments", {comments: [event("1")]});
     plugin.subscribe("comments", {comments: [event("1"), event("2")]});
     let status = (await plugin.request({method: "GET"})).response;
     expect(status.queuedCount).toBe(1); expect(status.droppedCount).toBe(1);
     await plugin.request({method: "POST", body: {action: "settings", settings: {...settings, honorific: "さま"}}});
     expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(1);
-    expect((await plugin.request({method: "POST", body: {action: "test", text: "test"}})).code).toBe(409);
     expect((await plugin.request({method: "POST", body: {action: "settings", settings: {...settings, sendIntervalMs: 0}}})).code).toBe(400);
     await plugin.request({method: "POST", body: {action: "settings", settings: {...settings, enabled: false}}});
     status = (await plugin.request({method: "GET"})).response;
     expect(status.queuedCount).toBe(0);
+    expect(status.droppedCount).toBe(2);
+    bridge.online = false;
+    expect((await plugin.request({method: "POST", body: {action: "test", text: "test"}})).code).toBe(409);
     bridge.online = true;
     expect((await plugin.request({method: "POST", body: {action: "test", text: "手動テスト"}})).code).toBe(200);
-    await Bun.sleep(5); expect(bridge.texts).toEqual(["手動テスト"]);
+    await Bun.sleep(5); expect(bridge.texts).toEqual(["花子さん、こんにちは"]);
+    expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(1);
   } finally { plugin.destroy(); await rm(dir, {recursive: true}); }
 });
 
-test("初回全件と複数回に分かれた起動前履歴を除外し、新着は全件を順番に読む", async () => {
+test("接続時刻で初回の新着と履歴を分け、再接続で古い待機を破棄する", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "mascot-latest-"));
   const bridge = new FakeBridge(); bridge.online = false;
   const plugin = createPlugin({settingsFile: path.join(dir, "settings.json"), bridge});
+  const timed = (id: string, timestamp: unknown) => ({...event(id, id), data: {...event(id, id).data, timestamp}});
   try {
     plugin.init(null);
     await plugin.request({method: "POST", body: {action: "settings", settings: {...DEFAULT_SETTINGS, enabled: true}}});
-    const comments = Array.from({length: 100}, (_, i) => event(String(i), `コメント${i}`));
-    plugin.subscribe("comments", {comments: []});
-    plugin.subscribe("comments", {comments});
-    const startedAt = (await plugin.request({method: "GET"})).response.startedAt as number;
+    plugin.subscribe("comments", {comments: [event("offline")]});
     expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(0);
-    const timed = (id: string, timestamp: unknown) => ({...event(id, id), data: {...event(id, id).data, timestamp}});
-    plugin.subscribe("comments", {comments: [timed("old-ms", startedAt - 60000), timed("old-seconds", Math.floor(startedAt / 1000) - 60),
-      timed("old-iso", new Date(startedAt - 60000).toISOString()), timed("new1", startedAt + 1), timed("new2", String(startedAt + 2)), event("unknown", "unknown")]});
-    expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(3);
-    expect((await plugin.request({method: "GET"})).response.ignoredStartupCount).toBe(103);
     bridge.online = true;
-    await Bun.sleep(250);
+    const connectedAt = bridge.fakeConnectedAt;
+    plugin.subscribe("comments", {comments: []});
+    plugin.subscribe("comments", {comments: [timed("old-ms", connectedAt - 1),
+      timed("old-seconds", Math.floor(connectedAt / 1000) - 60),
+      timed("old-iso", new Date(connectedAt - 60000).toISOString()),
+      timed("new1", connectedAt), timed("new2", String(connectedAt + 1)),
+      timed("unknown", undefined), timed("invalid", "invalid")]});
+    await Bun.sleep(5);
     expect(bridge.texts).toEqual(["花子さん、new1"]);
-    plugin.subscribe("comments", {comments});
-    expect(bridge.texts.length).toBe(1);
     expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(2);
+    expect((await plugin.request({method: "GET"})).response.ignoredStartupCount).toBe(5);
+    // 同じ接続内で複数回に分かれた履歴や既知IDが届いても読まない。
+    plugin.subscribe("comments", {comments: [timed("late-history", connectedAt - 1000), timed("new1", connectedAt)]});
+    expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(2);
+    // ポーリングの間に切断・再接続が完了しても、接続IDで待機を破棄する。
+    bridge.online = false;
+    bridge.online = true;
+    const reconnectedAt = bridge.fakeConnectedAt;
+    plugin.subscribe("comments", {comments: [timed("during-outage", reconnectedAt - 1),
+      timed("offline", reconnectedAt), timed("fresh", reconnectedAt), timed("fresh", reconnectedAt)]});
+    const status = (await plugin.request({method: "GET"})).response;
+    expect(status.connectedAt).toBe(reconnectedAt);
+    expect(status.droppedCount).toBe(2);
+    expect(status.queuedCount).toBe(1);
+    expect(status.ignoredStartupCount).toBe(7);
+    expect(bridge.texts).toEqual(["花子さん、new1"]);
+    // 接続中の新着だけが待機し、切断を検出すると待機も破棄する。
+    bridge.online = false;
+    expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(0);
+    expect((await plugin.request({method: "GET"})).response.droppedCount).toBe(3);
+  } finally { plugin.destroy(); await rm(dir, {recursive: true}); }
+});
+
+test("各接続の初回は時刻不明の最後の1件だけ読み、以降は全件を重複なく読む", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "mascot-fallback-"));
+  const bridge = new FakeBridge();
+  const plugin = createPlugin({settingsFile: path.join(dir, "settings.json"), bridge});
+  const unknown = (id: string) => ({...event(id, id), data: {...event(id, id).data, timestamp: undefined}});
+  try {
+    plugin.init(null);
+    await plugin.request({method: "POST", body: {action: "settings", settings: {...DEFAULT_SETTINGS, enabled: true}}});
+    plugin.subscribe("comments", {comments: []});
+    plugin.subscribe("comments", {comments: [unknown("old"), unknown("latest"), unknown("latest"),
+      {data: {id: "history", comment: "履歴", isHistory: true}},
+      {data: {id: "self", comment: "自分", isSelf: true}}]});
+    await Bun.sleep(5);
+    expect(bridge.texts).toEqual(["花子さん、latest"]);
+    expect((await plugin.request({method: "GET"})).response.ignoredStartupCount).toBe(1);
+    plugin.subscribe("comments", {comments: [unknown("old"), unknown("latest"), unknown("a"), unknown("b")]});
+    expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(2);
+    bridge.online = false; bridge.online = true;
+    plugin.subscribe("comments", {comments: [unknown("re-old"), unknown("re-latest")]});
+    const status = (await plugin.request({method: "GET"})).response;
+    expect(status.queuedCount).toBe(1);
+    expect(status.droppedCount).toBe(2);
+    expect(status.ignoredStartupCount).toBe(2);
   } finally { plugin.destroy(); await rm(dir, {recursive: true}); }
 });
 
@@ -156,18 +212,19 @@ test("敬称・区切りを変更しても名前がなければまとめて省�
 test("上限時の両方の破棄方針と待機期限を守る", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "mascot-overflow-"));
   for (const policy of ["dropOldest", "dropNewest"] as const) {
-    const bridge = new FakeBridge(); bridge.online = false;
+    const bridge = new FakeBridge();
     const plugin = createPlugin({settingsFile: path.join(dir, policy + ".json"), bridge});
     try {
       plugin.init(null);
-      const settings = {...DEFAULT_SETTINGS, enabled: true, queueLimit: 2, queueMaxAgeSeconds: 1, queueOverflow: policy};
+      const settings = {...DEFAULT_SETTINGS, enabled: true, queueLimit: 2, queueMaxAgeSeconds: 2, sendIntervalMs: 1500, queueOverflow: policy};
       await plugin.request({method: "POST", body: {action: "settings", settings}});
       plugin.subscribe("comments", {comments: [event("baseline")]});
+      await Bun.sleep(5);
+      bridge.texts.length = 0;
       plugin.subscribe("comments", {comments: [event("a", "a"), event("b", "b"), event("c", "c")]});
       expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(2);
       expect((await plugin.request({method: "GET"})).response.droppedCount).toBe(1);
-      bridge.online = true;
-      await Bun.sleep(250);
+      await Bun.sleep(1700);
       expect(bridge.texts).toEqual([`花子さん、${policy === "dropOldest" ? "b" : "a"}`]);
       await Bun.sleep(1100);
       expect((await plugin.request({method: "GET"})).response.queuedCount).toBe(0);
@@ -178,4 +235,4 @@ test("上限時の両方の破棄方針と待機期限を守る", async () => {
     } finally { plugin.destroy(); }
   }
   await rm(dir, {recursive: true});
-});
+}, 10000);

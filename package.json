@@ -1,6 +1,6 @@
 {
   "name": "live2d-mascot-onecomme-plugin",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT",
   "private": true,
   "description": "わんコメのコメントをLive2D Desktop Mascotへ送る補助プラグイン",

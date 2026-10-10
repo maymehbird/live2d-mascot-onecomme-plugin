@@ -24,11 +24,14 @@ export class MascotBridge {
   private file = "";
   private state: ConnectionState = "stopped";
   private error: string | null = null;
+  private connectedAt: number | null = null;
+  private connectionId = 0;
 
   constructor(private readonly retryMs = 3000, private readonly timeoutMs = 5000) {}
 
   status() {
-    return { state: this.state, connected: this.state === "connected", bridgeFile: this.file, error: this.error };
+    return { state: this.state, connected: this.state === "connected", connectedAt: this.connectedAt,
+      connectionId: this.connectionId, bridgeFile: this.file, error: this.error };
   }
 
   async say(text: string): Promise<boolean> {
@@ -55,6 +58,7 @@ export class MascotBridge {
     this.socket = undefined;
     socket?.terminate();
     this.state = "stopped";
+    this.connectedAt = null;
     this.error = null;
   }
 
@@ -65,6 +69,7 @@ export class MascotBridge {
     this.socket = undefined;
     socket?.terminate();
     this.state = "retrying";
+    this.connectedAt = null;
     this.error = error;
     // 毎回ファイルを読み直し、マスコット再起動時のポートとトークン更新に追従する。
     this.timer = setTimeout(() => void this.connect(generation), this.retryMs);
@@ -120,7 +125,11 @@ export class MascotBridge {
       clearTimeout(this.timer);
       this.timer = undefined;
       this.state = "connected";
+      this.connectedAt = Date.now();
+      this.connectionId++;
       this.error = null;
+      // 接続成立ごとに1回通知する。重複welcomeは上の接続済み判定で除外する。
+      void this.say("わんコメに接続しました。");
     });
     // エラー本文には認証URLが含まれる可能性があるため外へ返さない。
     socket.on("error", () => fail("マスコットへの接続に失敗しました。再接続します。"));

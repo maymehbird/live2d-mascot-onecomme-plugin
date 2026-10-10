@@ -21,6 +21,7 @@ async function build() {
   await rm(path.join(outDir, "README.md"), { force: true });
   await cp(path.join(root, "LICENSE"), path.join(outDir, "LICENSE"));
   await cp(path.join(root, "INSTALL.txt"), path.join(outDir, "INSTALL.txt"));
+  await cp(path.join(root, "CHANGELOG.md"), path.join(outDir, "CHANGELOG.md"));
   const wsLicense = await Bun.file(path.join(root, "node_modules", "ws", "LICENSE")).text();
   await Bun.write(path.join(outDir, "THIRD-PARTY-NOTICES.txt"),
     "This plugin bundles ws (https://github.com/websockets/ws).\n\n" + wsLicense);

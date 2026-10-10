@@ -20,7 +20,7 @@ test("welcome待機・認証・再起動による接続情報更新・停止", a
   const servers: WebSocketServer[] = [];
   let connections = 0;
   let welcome: (() => void) | undefined;
-  let received: unknown;
+  const received: unknown[] = [];
   const server = async (token: string, delayed = false) => {
     const wss = new WebSocketServer({host: "127.0.0.1", port: 0,
       verifyClient: (info: {origin: string; req: {url?: string}}) => !info.origin && new URL(info.req.url!, "http://localhost").searchParams.get("token") === token});
@@ -28,7 +28,7 @@ test("welcome待機・認証・再起動による接続情報更新・停止", a
     await new Promise<void>(resolve => wss.on("listening", resolve));
     wss.on("connection", socket => {
       connections++;
-      socket.on("message", data => { received = JSON.parse(data.toString()); });
+      socket.on("message", data => { received.push(JSON.parse(data.toString())); });
       const send = () => socket.send(JSON.stringify({v: 1, type: "welcome", payload: {protocol: 1, app: "live2d-desktop-mascot"}}));
       if (delayed) welcome = send; else send();
     });
@@ -43,21 +43,39 @@ test("welcome待機・認証・再起動による接続情報更新・停止", a
     const first = await server("token +/&?", true);
     await until(() => bridge.status().state === "waitingWelcome" && !!welcome);
     expect(bridge.status().connected).toBe(false);
+    expect(bridge.status().connectedAt).toBeNull();
     expect(await bridge.say("早すぎる送信")).toBe(false);
+    expect(received).toEqual([]);
     welcome!();
     await until(() => bridge.status().connected);
+    const firstConnectedAt = bridge.status().connectedAt!;
+    const firstConnectionId = bridge.status().connectionId;
+    expect(firstConnectedAt).toBeGreaterThan(0);
+    await until(() => received.length === 1);
+    expect(received[0]).toMatchObject({v: 1, type: "say", payload: {text: "わんコメに接続しました。"}});
+    welcome!();
     expect(await bridge.say("読み上げテスト")).toBe(true);
-    await until(() => !!received);
-    expect(received).toMatchObject({v: 1, type: "say", payload: {text: "読み上げテスト"}});
+    await until(() => received.length >= 2);
+    expect(received).toHaveLength(2);
+    expect(bridge.status().connectedAt).toBe(firstConnectedAt);
+    expect(bridge.status().connectionId).toBe(firstConnectionId);
+    expect(received[1]).toMatchObject({v: 1, type: "say", payload: {text: "読み上げテスト"}});
     const before = connections;
     await server("new-token");
     for (const client of first.clients) client.terminate();
     await until(() => connections > before && bridge.status().connected);
+    expect(bridge.status().connectedAt!).toBeGreaterThanOrEqual(firstConnectedAt);
+    expect(bridge.status().connectionId).toBe(firstConnectionId + 1);
+    await until(() => received.length >= 3);
+    expect(received).toHaveLength(3);
+    expect(received[2]).toMatchObject({v: 1, type: "say", payload: {text: "わんコメに接続しました。"}});
     expect(JSON.stringify(bridge.status())).not.toContain("new-token");
     bridge.stop();
     await Bun.sleep(80);
     expect(bridge.status().state).toBe("stopped");
+    expect(bridge.status().connectedAt).toBeNull();
     expect(connections).toBe(before + 1);
+    expect(received).toHaveLength(3);
   } finally {
     bridge.stop();
     for (const wss of servers) {

@@ -111,7 +111,7 @@ function render(value, fill = false) {
   $('status').textContent = JSON.stringify(value,null,2);
   if (!value.connection) return;
   const states = {connected:'接続済み',connecting:'接続中',waitingWelcome:'接続確認待ち',retrying:'再接続待ち',stopped:'停止中'};
-  $('connection').textContent = `${states[value.connection.state] || value.connection.state} / 送信 ${value.sentCount}件 / 待機 ${value.queuedCount}件 / 破棄・期限切れ ${value.droppedCount}件 / 起動時の除外 ${value.ignoredStartupCount}件` + (value.connection.error ? ` — ${value.connection.error}` : '') + (value.settingsError ? ` — ${value.settingsError}` : '');
+  $('connection').textContent = `${states[value.connection.state] || value.connection.state} / 送信 ${value.sentCount}件 / 待機 ${value.queuedCount}件 / 破棄・期限切れ ${value.droppedCount}件 / 接続前・時刻不明の除外 ${value.ignoredStartupCount}件` + (value.connection.error ? ` — ${value.connection.error}` : '') + (value.settingsError ? ` — ${value.settingsError}` : '');
   if (fill) { for (const id of fields) { if ($(id).type === 'checkbox') $(id).checked = value.settings[id]; else $(id).value = value.settings[id]; } syncFallback(); syncPreset(); }
 }
 async function run(button, task) {

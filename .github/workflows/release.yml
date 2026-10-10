@@ -41,28 +41,35 @@ jobs:
       - name: Verify release version and files
         run: bun run verify-release
 
+      - name: Read package version
+        id: package
+        run: bun -e 'console.log("version=" + require("./package.json").version)' >> "$GITHUB_OUTPUT"
+
       - name: Create zip archive
         working-directory: dist
+        env:
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
         run: |
-          zip live2d-mascot-onecomme-plugin.zip \
+          zip "live2d-mascot-onecomme-plugin-v${PACKAGE_VERSION}.zip" \
             live2d-mascot-onecomme-plugin/plugin.js \
             live2d-mascot-onecomme-plugin/index.html \
             live2d-mascot-onecomme-plugin/INSTALL.txt \
+            live2d-mascot-onecomme-plugin/CHANGELOG.md \
             live2d-mascot-onecomme-plugin/LICENSE \
             live2d-mascot-onecomme-plugin/THIRD-PARTY-NOTICES.txt
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: live2d-mascot-onecomme-plugin
-          path: dist/live2d-mascot-onecomme-plugin.zip
+          name: live2d-mascot-onecomme-plugin-v${{ steps.package.outputs.version }}
+          path: dist/live2d-mascot-onecomme-plugin-v${{ steps.package.outputs.version }}.zip
           if-no-files-found: error
 
       - name: Create Release
         if: github.event_name == 'push' && github.ref_type == 'tag'
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/live2d-mascot-onecomme-plugin.zip
+          files: dist/live2d-mascot-onecomme-plugin-v${{ steps.package.outputs.version }}.zip
           fail_on_unmatched_files: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
