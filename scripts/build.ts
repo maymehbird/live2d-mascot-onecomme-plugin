@@ -1,4 +1,4 @@
-import { cp, mkdir } from "node:fs/promises";
+import { cp, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dir, "..");
@@ -18,7 +18,8 @@ async function build() {
     throw new Error("Build failed");
   }
   await cp(path.join(root, "static"), outDir, { recursive: true });
-  for (const file of ["README.md", "LICENSE"]) await cp(path.join(root, file), path.join(outDir, file));
+  await rm(path.join(outDir, "README.md"), { force: true });
+  await cp(path.join(root, "LICENSE"), path.join(outDir, "LICENSE"));
   const wsLicense = await Bun.file(path.join(root, "node_modules", "ws", "LICENSE")).text();
   await Bun.write(path.join(outDir, "THIRD-PARTY-NOTICES.txt"),
     "This plugin bundles ws (https://github.com/websockets/ws).\n\n" + wsLicense);

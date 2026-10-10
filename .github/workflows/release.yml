@@ -47,7 +47,6 @@ jobs:
           zip live2d-mascot-onecomme-plugin.zip \
             live2d-mascot-onecomme-plugin/plugin.js \
             live2d-mascot-onecomme-plugin/index.html \
-            live2d-mascot-onecomme-plugin/README.md \
             live2d-mascot-onecomme-plugin/LICENSE \
             live2d-mascot-onecomme-plugin/THIRD-PARTY-NOTICES.txt
 
