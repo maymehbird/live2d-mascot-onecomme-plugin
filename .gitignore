@@ -6,4 +6,5 @@ dist/
 !.env.example
 bridge.json
 settings.json
+settings.json.tmp
 *.log

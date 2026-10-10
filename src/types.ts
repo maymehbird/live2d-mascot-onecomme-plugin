@@ -1,7 +1,8 @@
 // 既存thank-you-card-onecomme-pluginのプラグイン境界を参考にした最小型。
 export interface PluginRequest {
   method: string;
-  body?: string;
+  /** ホスト側でJSONが解析済みの場合もあるため、境界では型を決めつけない。 */
+  body?: unknown;
 }
 
 export interface OneCommePlugin {

@@ -1,34 +1,137 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Live2Dマスコット連携</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 48px auto; padding: 0 24px; line-height: 1.8; color: #23303b; background: #f6f8fa; }
-    main { background: white; padding: 24px; border-radius: 12px; }
-    button { padding: 8px 16px; cursor: pointer; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-  </style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live2Dマスコット連携</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 20px;line-height:1.8;color:#23303b;background:#f6f8fa}main{background:white;padding:24px;border-radius:12px}label{display:block;margin:12px 0}input[type=text],input[type=number]{box-sizing:border-box;padding:8px;width:100%}button{padding:8px 16px;cursor:pointer;margin:4px 4px 4px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}#notice{min-height:1.8em}fieldset{border:1px solid #ddd;margin:16px 0}small{display:block;color:#556}
+</style>
 </head>
-<body>
-  <main>
-    <h1>Live2Dマスコット連携</h1>
-    <p>開発準備版です。コメント受信の入口と設定の初期値を用意しています。読み上げ送信、設定変更・保存は未実装です。</p>
-    <button id="refresh" type="button">状態を取得</button>
-    <pre id="status" aria-live="polite">わんコメからこの画面を開いてください。</pre>
-  </main>
-  <script>
-    document.getElementById('refresh').addEventListener('click', async () => {
-      const output = document.getElementById('status');
-      try {
-        const response = await fetch('/api/plugins/com.onecomme.live2d-mascot');
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        output.textContent = JSON.stringify(await response.json(), null, 2);
-      } catch {
-        output.textContent = '状態を取得できませんでした。わんコメの起動とプラグインの有効化を確認してください。';
-      }
-    });
-  </script>
-</body>
-</html>
+<body><main>
+<h1>Live2Dマスコット連携</h1>
+<p><a href="https://github.com/fixtan/live2d-desktop-mascot" target="_blank" rel="noopener noreferrer">Live2D Desktop Mascot</a> にわんコメのコメントを送る補助プラグインです。マスコットアプリを別途起動して使用してください。</p>
+<p id="connection" aria-live="polite">状態を取得しています…</p>
+<fieldset><legend>接続</legend>
+<label>bridge.jsonの場所（空欄で自動検出）<input id="bridgeFile" type="text" placeholder="自動検出"></label>
+<button id="browse" type="button">参照…</button><button id="connect" type="button">接続・再接続</button>
+<small>選択したファイルの場所は自動保存します。キャンセル時は変更しません。</small>
+</fieldset>
+<fieldset><legend>コメントの読み上げ</legend>
+<label><input id="enabled" type="checkbox"> コメントをマスコットへ送信する</label>
+<label>名前のテンプレート<select id="namePreset">
+<option value="name">自動選択（フォールバックあり）</option>
+<option value="nickname">わんコメ名</option>
+<option value="accountName">アカウント表示名</option>
+<option value="screenName">スクリーン名</option>
+<option value="custom">カスタム</option>
+</select></label>
+<label>敬称（空欄なら付けない）<input id="honorific" type="text" maxlength="100" placeholder="さん"></label>
+<label>読み上げテンプレート<input id="messageTemplate" type="text"></label>
+<small>{name}: わんコメ名 → アカウント表示名 → スクリーン名 → 下の「名前がないときの処理」の順に選びます。<br>
+{nickname}: わんコメで付けたニックネーム。値がなければ、別の名前で補わず省略します。<br>
+{accountName}: アカウントの表示名。値がなければ、別の名前で補わず省略します。<br>
+{screenName}: 受信データのスクリーン名（サービスにより @ユーザー名など）。値がなければ、別の名前で補わず省略します。<br>
+{honorific}: 上の敬称欄で設定した呼び方（例：さん、さま）。<br>
+{comment}: コメント本文。<br>
+通常は {name}{honorific}、{comment} を使用します。「、」などの区切りはテンプレート内で変更できます。</small>
+<label>すべての名前がないときの処理<select id="fallbackMode"><option value="name">指定した呼び名を使う（自動選択の最後）</option><option value="commentOnly">名前を呼ばず本文だけ読む</option></select></label>
+<label>最後に使う呼び名<input id="fallbackName" type="text" maxlength="100" placeholder="視聴者"></label>
+<small>わんコメ名・アカウント表示名・スクリーン名がすべてない場合に適用します。名前が空の場合は、直後の {honorific} と区切りの句読点・空白も省略します。敬称はテンプレートへ直接書かず {honorific} を使用してください。</small>
+<label>文字数上限（1〜200）<input id="maxTextLength" type="number" min="1" max="200"></label>
+<label>送信間隔（ミリ秒・1000〜60000）<input id="sendIntervalMs" type="number" min="1000" max="60000"></label>
+<p>最初の受信分と、プラグイン起動前の時刻を持つコメントは読みません。その後の新着は順番に読みます。</p>
+<label>送信待ち上限（1〜100件）<input id="queueLimit" type="number" min="1" max="100"></label>
+<label>待機期限（1〜3600秒）<input id="queueMaxAgeSeconds" type="number" min="1" max="3600"></label>
+<label>上限に達したとき<select id="queueOverflow"><option value="dropOldest">待機中の最も古いコメントを落とす</option><option value="dropNewest">新しいコメントを落とす</option></select></label>
+<label><input id="excludeOwnComments" type="checkbox"> 自分のコメントを除外する</label>
+<label>自分のユーザーID（複数はカンマ区切り）<input id="ownUserIds" type="text"></label>
+<small>自己コメントフラグがない配信サービスでは、ユーザーIDの指定が必要です。送信間隔は読み上げの完了時間ではありません。</small>
+</fieldset>
+<p id="save-status" role="status">設定を読み込んでいます…</p>
+<button id="save" type="button" hidden>保存を再試行</button>
+<fieldset><legend>手動テスト</legend>
+<label>テスト文<input id="testText" type="text" value="こんにちは。接続テストです。" maxlength="1000"></label>
+<button id="test" type="button">テスト送信</button>
+<small>コメント送信が無効でも、このボタンでテスト文を送信できます。</small>
+</fieldset>
+<p id="notice" role="status"></p><details><summary>詳細な状態</summary><button id="refresh" type="button">状態を取得</button><pre id="status"></pre></details>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const fields = ['bridgeFile','messageTemplate','honorific','fallbackName','fallbackMode','maxTextLength','sendIntervalMs','queueLimit','queueMaxAgeSeconds','queueOverflow','ownUserIds','enabled','excludeOwnComments'];
+const presets = Object.fromEntries(['name','nickname','accountName','screenName'].map(key => [key,`{${key}}{honorific}、{comment}`]));
+function syncPreset() { $('namePreset').value = Object.keys(presets).find(key => presets[key] === $('messageTemplate').value) || 'custom'; }
+function syncFallback() { $('fallbackName').disabled = $('fallbackMode').value === 'commentOnly'; }
+let loaded = false;
+let dirty = false, revision = 0, saveTimer, currentSave;
+for (const id of [...fields, 'namePreset']) $(id).disabled = true;
+function scheduleSave(delay = 500) {
+  if (!loaded) return;
+  dirty = true; revision++; clearTimeout(saveTimer);
+  $('save-status').textContent = '変更を自動保存します…'; $('save').hidden = true;
+  saveTimer = setTimeout(() => saveSettings(),delay);
+}
+async function saveSettings() {
+  if (currentSave) return currentSave;
+  if (!dirty) return;
+  clearTimeout(saveTimer);
+  const version = revision;
+  const settings = Object.fromEntries(fields.map(id => [id,$(id).type === 'checkbox' ? $(id).checked : $(id).type === 'number' ? Number($(id).value) : $(id).value]));
+  $('save-status').textContent = '保存中…';
+  currentSave = (async () => {
+    try {
+      const value = await api({action:'settings',settings}); render(value);
+      if (version === revision) { dirty = false; $('save-status').textContent = '自動保存済み'; $('save').hidden = true; }
+    } catch(error) {
+      if (version === revision) { $('save-status').textContent = `保存できませんでした：${error.message}`; $('save').hidden = false; }
+    }
+  })();
+  await currentSave; currentSave = undefined;
+  if (version !== revision && dirty) { clearTimeout(saveTimer); saveTimer = setTimeout(() => saveSettings(),500); }
+}
+async function persistPending() {
+  if (!loaded) throw new Error('設定の読み込みを待ってください。');
+  if (currentSave) await currentSave;
+  if (dirty) await saveSettings();
+  if (dirty) throw new Error('設定を保存できていません。入力と保存状態を確認してください。');
+}
+for (const id of fields) {
+  $(id).addEventListener('input', event => { if (!event.isComposing) scheduleSave(); });
+  $(id).addEventListener('compositionend', () => scheduleSave());
+  $(id).addEventListener('change', () => scheduleSave(0));
+}
+async function api(body) {
+  const res = await fetch('/api/plugins/com.onecomme.live2d-mascot', body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {});
+  const raw = await res.json();
+  const value = raw.response ?? raw;
+  if (!res.ok || (raw.code && raw.code >= 400) || value.error) throw new Error(value.error || `HTTP ${res.status}`);
+  return value;
+}
+function render(value, fill = false) {
+  $('status').textContent = JSON.stringify(value,null,2);
+  if (!value.connection) return;
+  const states = {connected:'接続済み',connecting:'接続中',waitingWelcome:'接続確認待ち',retrying:'再接続待ち',stopped:'停止中'};
+  $('connection').textContent = `${states[value.connection.state] || value.connection.state} / 送信 ${value.sentCount}件 / 待機 ${value.queuedCount}件 / 破棄・期限切れ ${value.droppedCount}件 / 起動時の除外 ${value.ignoredStartupCount}件` + (value.connection.error ? ` — ${value.connection.error}` : '') + (value.settingsError ? ` — ${value.settingsError}` : '');
+  if (fill) { for (const id of fields) { if ($(id).type === 'checkbox') $(id).checked = value.settings[id]; else $(id).value = value.settings[id]; } syncFallback(); syncPreset(); }
+}
+async function run(button, task) {
+  button.disabled = true; $('notice').textContent = '';
+  try { await task(); } catch(error) { $('notice').textContent = error.message; }
+  finally { button.disabled = false; }
+}
+$('browse').onclick = () => run($('browse'),async () => {
+  $('notice').textContent = 'ファイル選択ダイアログを開いています…';
+  const value = await api({action:'browse'});
+  if (value.bridgeFile) { $('bridgeFile').value = value.bridgeFile; scheduleSave(0); $('notice').textContent = 'ファイルを選択しました。'; }
+  else $('notice').textContent = 'ファイル選択をキャンセルしました。';
+});
+$('connect').onclick = () => run($('connect'),async () => { await persistPending(); render(await api({action:'connect',bridgeFile:$('bridgeFile').value})); });
+$('fallbackMode').onchange = syncFallback;
+$('namePreset').onchange = () => { const template = presets[$('namePreset').value]; if (template) { $('messageTemplate').value = template; scheduleSave(0); } };
+$('messageTemplate').oninput = syncPreset;
+$('save').onclick = () => run($('save'),async () => { await persistPending(); });
+$('test').onclick = () => run($('test'),async () => { await persistPending(); render(await api({action:'test',text:$('testText').value})); $('notice').textContent = 'テスト文を送信待ちに追加しました。'; });
+$('refresh').onclick = () => run($('refresh'),async () => render(await api()));
+async function refresh(){ try { render(await api(),!loaded); if (!loaded) { loaded = true; for (const id of [...fields,'namePreset']) $(id).disabled = false; syncFallback(); $('save-status').textContent = '変更すると自動保存します'; } } catch(error){ $('connection').textContent = error.message; } }
+refresh(); setInterval(refresh,2000);
+</script></body></html>

@@ -10,6 +10,7 @@ async function build() {
   outdir: outDir,
   naming: "plugin.js",
   target: "node",
+  define: { "process.env.WS_NO_BUFFER_UTIL": '"1"', "process.env.WS_NO_UTF_8_VALIDATE": '"1"' },
   format: "cjs",
 });
   if (!result.success) {
@@ -17,6 +18,10 @@ async function build() {
     throw new Error("Build failed");
   }
   await cp(path.join(root, "static"), outDir, { recursive: true });
+  for (const file of ["README.md", "LICENSE"]) await cp(path.join(root, file), path.join(outDir, file));
+  const wsLicense = await Bun.file(path.join(root, "node_modules", "ws", "LICENSE")).text();
+  await Bun.write(path.join(outDir, "THIRD-PARTY-NOTICES.txt"),
+    "This plugin bundles ws (https://github.com/websockets/ws).\n\n" + wsLicense);
   console.info(`Built: ${outDir}`);
 }
 
