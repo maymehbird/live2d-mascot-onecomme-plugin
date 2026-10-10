@@ -72,10 +72,10 @@ git push origin v0.2.0
 
 GitHubのActions → Build and Release → Run workflowから手動で実行した場合は、ビルド済みZIPをActionsの成果物として保存します。手動実行ではReleaseを作りません。
 
-配布ファイルはlive2d-mascot-onecomme-plugin.zipです。中のlive2d-mascot-onecomme-pluginフォルダをわんコメのpluginsフォルダへ配置してください。ZIPには参照元と同じ動作用のplugin.js・index.htmlと、ライセンス表記のLICENSE・THIRD-PARTY-NOTICES.txtを含め、接続トークンや個人設定は含めません。
+配布ファイルはlive2d-mascot-onecomme-plugin.zipです。中のlive2d-mascot-onecomme-pluginフォルダをわんコメのpluginsフォルダへ配置してください。ZIPには参照元と同じ動作用のplugin.js・index.html、インストール手順のINSTALL.txt、ライセンス表記のLICENSE・THIRD-PARTY-NOTICES.txtを含め、接続トークンや個人設定は含めません。
 
 ## ライセンス
 
 MIT。詳しくは [LICENSE](LICENSE) を参照してください。同梱するwsのライセンスは、配布フォルダのTHIRD-PARTY-NOTICES.txtへ収録します。
 
-README.mdはGitHub上の説明として管理し、配布ZIPには含めません。連携先のLive2D Desktop Mascotへのリンクはプラグイン画面でも確認できます。
+README.mdはGitHub上の説明として管理し、配布ZIPには含めません。初回インストール・動作確認・設定を保持した更新の手順は、同梱のINSTALL.txtに記載しています。連携先のLive2D Desktop Mascotへのリンクはプラグイン画面でも確認できます。
